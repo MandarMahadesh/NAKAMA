@@ -172,8 +172,8 @@ A full-stack, One Piece-themed travel companion application where users can conn
 
 1. **Clone the repository**
 ```bash
-git clone https://github.com/yourusername/nakama-travel-app.git
-cd nakama-travel-app
+git clone https://github.com/MandarMahadesh/NAKAMA.git
+cd NAKAMA
 ```
 
 2. **Install dependencies**
