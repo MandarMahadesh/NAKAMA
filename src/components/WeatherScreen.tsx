@@ -44,20 +44,21 @@ interface WeatherData {
   }[];
 }
 
-// Free OpenWeatherMap API - users can get their own key at https://openweathermap.org/api
-const API_KEY = '2c9d4e9d3f6e8e4a0c3a5b7d8e9f0a1b'; // Demo key - replace with real one
-
 export function WeatherScreen({ onBack, onNavigate }: WeatherScreenProps) {
   const [city, setCity] = useState('Tokyo');
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [currentLat, setCurrentLat] = useState<number | null>(null);
+  const [currentLon, setCurrentLon] = useState<number | null>(null);
 
   useEffect(() => {
     // Try to get user's location or default to Tokyo
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
+          setCurrentLat(position.coords.latitude);
+          setCurrentLon(position.coords.longitude);
           fetchWeatherByCoords(position.coords.latitude, position.coords.longitude);
         },
         () => {
@@ -75,31 +76,36 @@ export function WeatherScreen({ onBack, onNavigate }: WeatherScreenProps) {
     setError('');
     
     try {
-      // Fetch current weather
-      const currentResponse = await fetch(
-        `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&units=metric&appid=${API_KEY}`
+      // Use Open-Meteo API (free, no auth required)
+      const weatherResponse = await fetch(
+        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,surface_pressure,wind_speed_10m,visibility&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto`
       );
       
-      if (!currentResponse.ok) {
+      if (!weatherResponse.ok) {
         throw new Error('Unable to fetch weather data');
       }
       
-      const currentData = await currentResponse.json();
+      const weatherData = await weatherResponse.json();
       
-      // Fetch forecast
-      const forecastResponse = await fetch(
-        `https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&units=metric&appid=${API_KEY}`
+      // Get city name from coordinates using reverse geocoding
+      const geoResponse = await fetch(
+        `https://geocoding-api.open-meteo.com/v1/search?latitude=${lat}&longitude=${lon}&count=1`
       );
       
-      const forecastData = await forecastResponse.json();
+      let cityName = 'Your Location';
+      if (geoResponse.ok) {
+        const geoData = await geoResponse.json();
+        if (geoData.results && geoData.results.length > 0) {
+          cityName = geoData.results[0].name;
+        }
+      }
       
-      const weatherData = processWeatherData(currentData, forecastData);
-      setWeather(weatherData);
-      setCity(currentData.name);
+      const processedWeather = processOpenMeteoData(weatherData, cityName);
+      setWeather(processedWeather);
+      setCity(cityName);
     } catch (err) {
       console.error('Weather fetch error:', err);
-      setError('Unable to get weather data. Please try entering a city name.');
-      // Fallback to mock data
+      setError('Unable to get weather data. Showing sample data.');
       setWeather(getMockWeather('Your Location'));
     } finally {
       setLoading(false);
@@ -111,79 +117,94 @@ export function WeatherScreen({ onBack, onNavigate }: WeatherScreenProps) {
     setError('');
     
     try {
-      // Fetch current weather
-      const currentResponse = await fetch(
-        `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(location)}&units=metric&appid=${API_KEY}`
+      // Geocode the city name to get coordinates
+      const geoResponse = await fetch(
+        `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=en&format=json`
       );
       
-      if (!currentResponse.ok) {
+      if (!geoResponse.ok) {
         throw new Error('City not found');
       }
       
-      const currentData = await currentResponse.json();
+      const geoData = await geoResponse.json();
       
-      // Fetch forecast
-      const forecastResponse = await fetch(
-        `https://api.openweathermap.org/data/2.5/forecast?q=${encodeURIComponent(location)}&units=metric&appid=${API_KEY}`
+      if (!geoData.results || geoData.results.length === 0) {
+        throw new Error('City not found');
+      }
+      
+      const { latitude, longitude, name } = geoData.results[0];
+      
+      // Fetch weather data using coordinates
+      const weatherResponse = await fetch(
+        `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,surface_pressure,wind_speed_10m,visibility&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto`
       );
       
-      const forecastData = await forecastResponse.json();
+      if (!weatherResponse.ok) {
+        throw new Error('Unable to fetch weather data');
+      }
       
-      const weatherData = processWeatherData(currentData, forecastData);
-      setWeather(weatherData);
+      const weatherData = await weatherResponse.json();
+      const processedWeather = processOpenMeteoData(weatherData, name);
+      setWeather(processedWeather);
+      setCurrentLat(latitude);
+      setCurrentLon(longitude);
     } catch (err) {
       console.error('Weather fetch error:', err);
       setError('City not found. Please try another location.');
-      // Show mock data as fallback
       setWeather(getMockWeather(location));
     } finally {
       setLoading(false);
     }
   };
 
-  const processWeatherData = (current: any, forecast: any): WeatherData => {
-    // Process forecast data - get one entry per day
-    const dailyForecasts: any[] = [];
-    const processedDates = new Set();
+  const processOpenMeteoData = (data: any, cityName: string): WeatherData => {
+    const current = data.current;
+    const daily = data.daily;
     
-    forecast.list.forEach((item: any) => {
-      const date = new Date(item.dt * 1000);
-      const dateStr = date.toISOString().split('T')[0];
-      
-      if (!processedDates.has(dateStr) && dailyForecasts.length < 5) {
-        processedDates.add(dateStr);
-        dailyForecasts.push(item);
-      }
-    });
-
     const getDayName = (index: number) => {
       const days = ['Today', 'Tomorrow'];
       if (index < 2) return days[index];
       
-      const date = new Date();
-      date.setDate(date.getDate() + index);
+      const date = new Date(daily.time[index]);
       return date.toLocaleDateString('en-US', { weekday: 'long' });
     };
 
+    const getConditionFromCode = (code: number): { condition: string; description: string } => {
+      // WMO Weather interpretation codes
+      if (code === 0) return { condition: 'Sunny', description: 'clear sky' };
+      if (code <= 3) return { condition: 'Partly Cloudy', description: 'partly cloudy' };
+      if (code <= 48) return { condition: 'Foggy', description: 'foggy' };
+      if (code <= 57) return { condition: 'Drizzle', description: 'drizzle' };
+      if (code <= 67) return { condition: 'Rainy', description: 'rain' };
+      if (code <= 77) return { condition: 'Snowy', description: 'snow' };
+      if (code <= 82) return { condition: 'Rainy', description: 'rain showers' };
+      if (code <= 86) return { condition: 'Snowy', description: 'snow showers' };
+      if (code <= 99) return { condition: 'Stormy', description: 'thunderstorm' };
+      return { condition: 'Cloudy', description: 'cloudy' };
+    };
+
+    const currentCondition = getConditionFromCode(current.weather_code);
+
     return {
-      location: current.name,
-      temperature: Math.round(current.main.temp),
-      condition: mapWeatherCondition(current.weather[0].main),
-      description: current.weather[0].description,
-      humidity: current.main.humidity,
-      windSpeed: Math.round(current.wind.speed * 3.6), // Convert m/s to km/h
+      location: cityName,
+      temperature: Math.round(current.temperature_2m),
+      condition: currentCondition.condition,
+      description: currentCondition.description,
+      humidity: Math.round(current.relative_humidity_2m),
+      windSpeed: Math.round(current.wind_speed_10m),
       visibility: Math.round(current.visibility / 1000),
-      pressure: current.main.pressure,
-      feelsLike: Math.round(current.main.feels_like),
-      forecast: dailyForecasts.map((item, index) => {
-        const date = new Date(item.dt * 1000);
+      pressure: Math.round(current.surface_pressure),
+      feelsLike: Math.round(current.apparent_temperature),
+      forecast: daily.time.slice(0, 5).map((date: string, index: number) => {
+        const forecastCondition = getConditionFromCode(daily.weather_code[index]);
+        const dateObj = new Date(date);
         return {
           day: getDayName(index),
-          date: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-          high: Math.round(item.main.temp_max),
-          low: Math.round(item.main.temp_min),
-          condition: mapWeatherCondition(item.weather[0].main),
-          description: item.weather[0].description
+          date: dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          high: Math.round(daily.temperature_2m_max[index]),
+          low: Math.round(daily.temperature_2m_min[index]),
+          condition: forecastCondition.condition,
+          description: forecastCondition.description
         };
       })
     };
@@ -204,28 +225,13 @@ export function WeatherScreen({ onBack, onNavigate }: WeatherScreenProps) {
       pressure: Math.floor(Math.random() * 30) + 1000,
       feelsLike: Math.floor(Math.random() * 15) + 20,
       forecast: [
-        { day: 'Today', date: 'Dec 25', high: 28, low: 22, condition: 'Sunny', description: 'clear sky' },
-        { day: 'Tomorrow', date: 'Dec 26', high: 26, low: 20, condition: 'Cloudy', description: 'few clouds' },
-        { day: 'Friday', date: 'Dec 27', high: 24, low: 19, condition: 'Rainy', description: 'light rain' },
-        { day: 'Saturday', date: 'Dec 28', high: 27, low: 21, condition: 'Partly Cloudy', description: 'scattered clouds' },
-        { day: 'Sunday', date: 'Dec 29', high: 29, low: 23, condition: 'Sunny', description: 'clear sky' }
+        { day: 'Today', date: 'Oct 9', high: 28, low: 22, condition: 'Sunny', description: 'clear sky' },
+        { day: 'Tomorrow', date: 'Oct 10', high: 26, low: 20, condition: 'Cloudy', description: 'few clouds' },
+        { day: 'Friday', date: 'Oct 11', high: 24, low: 19, condition: 'Rainy', description: 'light rain' },
+        { day: 'Saturday', date: 'Oct 12', high: 27, low: 21, condition: 'Partly Cloudy', description: 'scattered clouds' },
+        { day: 'Sunday', date: 'Oct 13', high: 29, low: 23, condition: 'Sunny', description: 'clear sky' }
       ]
     };
-  };
-
-  const mapWeatherCondition = (main: string): string => {
-    const mapping: { [key: string]: string } = {
-      'Clear': 'Sunny',
-      'Clouds': 'Cloudy',
-      'Rain': 'Rainy',
-      'Drizzle': 'Drizzle',
-      'Thunderstorm': 'Stormy',
-      'Snow': 'Snowy',
-      'Mist': 'Foggy',
-      'Fog': 'Foggy',
-      'Haze': 'Hazy'
-    };
-    return mapping[main] || main;
   };
 
   const handleSearch = () => {
@@ -336,7 +342,7 @@ export function WeatherScreen({ onBack, onNavigate }: WeatherScreenProps) {
             onChange={(e) => setCity(e.target.value)}
             placeholder="Enter city name..."
             onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-            className="flex-1 bg-white dark:bg-gray-700 dark:text-white border-cyan-300 dark:border-cyan-700 focus:border-cyan-500"
+            className="flex-1 bg-white dark:bg-gray-700 dark:text-white dark:placeholder-gray-400 border-cyan-300 dark:border-cyan-700 focus:border-cyan-500"
           />
           <Button
             onClick={handleSearch}
