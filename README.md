@@ -352,8 +352,8 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 For questions, feedback, or support:
 - Create an issue in this repository
-- Email: your.email@example.com
-- Twitter: @yourhandle
+- Email: mandarmahadesh@gmail.com
+
 
 ## 🎯 Project Status
 
