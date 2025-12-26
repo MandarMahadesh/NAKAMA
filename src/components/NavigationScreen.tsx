@@ -193,7 +193,7 @@ export function NavigationScreen({ onBack }: NavigationScreenProps) {
                 loading="lazy"
                 allowFullScreen
                 referrerPolicy="no-referrer-when-downgrade"
-                src={`https://www.google.com/maps/embed/v1/directions?key=AIzaSyBFw0Qbyq9zTFTd-tUY6dZWTgaQzuU17R8&origin=${encodeURIComponent(currentLocation)}&destination=${encodeURIComponent(destination)}&mode=${selectedRoute === 'walking' ? 'walking' : selectedRoute === 'transit' ? 'transit' : 'driving'}`}
+                src={`https://www.google.com/maps/embed/v1/directions?origin=${encodeURIComponent(currentLocation)}&destination=${encodeURIComponent(destination)}&mode=${selectedRoute === 'walking' ? 'walking' : selectedRoute === 'transit' ? 'transit' : 'driving'}`}
               ></iframe>
             </div>
           </Card>
